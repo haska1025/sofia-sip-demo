@@ -20,6 +20,26 @@ typedef struct sip_dmo_op_s{
 
 sip_dmo_ctx g_ctx;
 
+/////////////////////////////////// api declare begin //////////////////////////////////////////
+sip_dmo_op *place_a_call(char const *name, const char *url);
+sip_dmo_op *sip_dmo_register(const char *name, const char *url);
+
+void sip_dmo_r_invite(int           status,
+        char const   *phrase,
+        nua_t        *nua,
+        nua_magic_t  *magic,
+        nua_handle_t *nh,
+        nua_hmagic_t *hmagic,
+        sip_t const  *sip,
+        tagi_t        tags[])
+{
+    if (status == 200){
+        nua_ack(nh, TAG_END());
+    }
+}
+
+int register_times=0;
+//////////////////////////////////  api declare end //////////////////////////////////////
 void sip_dmo_cb(nua_event_t   event,
         int           status,
         char const   *phrase,
@@ -30,12 +50,59 @@ void sip_dmo_cb(nua_event_t   event,
         sip_t const  *sip,
         tagi_t        tags[])
 {
+    printf("The sip dmo cb. event(%d) status(%d) phrase(%s)\n", event, status, phrase);
+
+    switch (event) {
+        case nua_i_invite:
+            printf("Someone invite me!!!!!!!!!!!\n");
+            break;
+        case nua_r_invite:
+            sip_dmo_r_invite(status, phrase, nua, magic, nh, hmagic, sip, tags);
+            break;
+        case nua_r_register:
+            if (status == 200){
+                //if (register_times == 0){
+register_times++;
+                //sip_dmo_register("sipptest", "sip:sipptest@192.168.32.107:5060");
+                //}else{
+                    place_a_call("sip_dmo", "sip:sipptest@192.168.32.107:5060");
+                //}
+            }
+            
+            break;
+        case nua_i_active:
+            if (status==200){
+                // Sleep 7secs, then bye
+                sleep(7);
+                nua_bye(nh, TAG_END());
+            }
+        case nua_r_bye:
+            {
+                // Release the handle
+                sip_dmo_op *op = (sip_dmo_op*)hmagic;
+                nua_handle_destroy(op->handle);
+                su_free(g_ctx.home, hmagic);
+            }
+            break;
+        default:
+            /* unknown event -> print out error message */
+            if (status > 100) {
+                printf("unknown event %d: %03d %s\n",
+                        event,
+                        status,
+                        phrase);
+            }
+            else {
+                printf("unknown event %d\n", event);
+            }
+            tl_print(stdout, "", tags);
+            break;
+    }
 }
 
 sip_dmo_op *place_a_call(char const *name, const char *url)
 {
     sip_dmo_op *op;
-    sip_to_t *to;
 
     /* create operation context information */
     op = su_zalloc(g_ctx.home, (sizeof *op));
@@ -65,7 +132,6 @@ sip_dmo_op *place_a_call(char const *name, const char *url)
     printf("before invite url(%s)\n", url);
 
     nua_invite(op->handle,
-            /*SIPTAG_TO_STR("sip:xxxx@192.168.32.107:5060"),*/
             SIPTAG_TO_STR(url),
             SIPTAG_FROM_STR(name),
             SIPTAG_CONTENT_TYPE_STR("application/sdp"),
@@ -74,6 +140,39 @@ sip_dmo_op *place_a_call(char const *name, const char *url)
 
     return op;
 }
+
+sip_dmo_op *sip_dmo_register(const char *name, const char *url)
+{
+    sip_dmo_op *op;
+    sip_to_t *sip_to;
+
+    /* create operation context information */
+    op = su_zalloc(g_ctx.home, (sizeof *op));
+    if (!op){
+        printf("Alloc op failed!\n");
+        return NULL;
+    }
+
+    sip_to = sip_to_create(g_ctx.home,  url_make(g_ctx.home, url));
+    /* create operation handle */
+    op->handle = nua_handle(g_ctx.nua, op, SIPTAG_TO(sip_to), TAG_END());
+    if (op->handle == NULL) {
+        printf("Cannot create operation handle\n");
+        return NULL;
+    }
+
+    nua_register(op->handle,
+            NUTAG_M_DISPLAY("1"),
+            NUTAG_M_USERNAME(name),
+            NUTAG_M_PARAMS("user=phone"),
+            NUTAG_M_FEATURES("audio"),
+            NUTAG_OUTBOUND("no-validate"),
+            NUTAG_CALLEE_CAPS(0),
+            TAG_END());
+
+    return op;
+}
+
 
 int init_sip_dmo()
 {
@@ -108,7 +207,8 @@ int main(int argc, char *argv[])
 
     printf("sip dmo init complete.\n");
 
-    place_a_call("sip_dmo", "sip:sipptest@192.168.32.107:5060");
+    place_a_call("sipptest", "sip:sipptest@192.168.32.107:5060");
+    //sip_dmo_register("sipptest", "sip:sipptest@192.168.32.107:5060");
     printf("sip dmo place a call complete.\n");
 
    su_root_run(g_ctx.root);
